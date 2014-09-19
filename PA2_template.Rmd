@@ -1,0 +1,132 @@
+# Most Harmful Storms and Weather Events Between 1996 and 2014
+
+## Synopsis
+In this report storms and other strong weather events are investigated in order to find ones that have the most harmful effect on population health and economy of United States. In order to find that NOAA Storm Database (https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2) was used.
+
+This work is done for peer assignment 2 for course "Reproducible Research" (https://class.coursera.org/repdata-006).
+
+## Data Processing
+
+### Loading Data
+Load required libraries:
+```{r init}
+library(stringr)
+library(ggplot2)
+library(gridExtra)
+```
+
+Unzip and load the data (assume database is in the current directory:
+```{r load, cache=TRUE}
+zz = bzfile("repdata-data-StormData.csv.bz2")
+dataset = read.csv(zz, header = TRUE)
+```
+
+### Data Filtering
+As seen in the database description (http://www.ncdc.noaa.gov/stormevents/details.jsp?type=eventtype) it contains only limited information about storm events prior to 1996. To avoid biased results dataset is filtered to data range between 1996 and 2014:
+
+```{r filter1}
+dim(dataset)[1]
+dataset$BEGIN_DATE = as.Date(dataset$BGN_DATE, "%m/%d/%Y")
+cleanData = dataset[dataset$BEGIN_DATE >= as.Date("1996/1/1"), 
+    c("BGN_DATE", "EVTYPE", "FATALITIES", "INJURIES",
+      "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")]
+# Remove old dataset to free memory
+rm(dataset)
+```
+
+Events with no reports of fatalities or economic damage are also filtered out:
+```{r filter2}
+# Remove events without fatalities and damage
+cleanData = cleanData[cleanData$FATALITIES + cleanData$INJURIES + 
+    cleanData$PROPDMG + cleanData$CROPDMG > 0, ]
+dim(cleanData)[1]
+```
+
+Size of the dataset is now reduced to `r dim(cleanData)[1]` events.
+
+### Data Cleanup
+
+Event types have minor problems (extra spaces and symbols, singular vs multiple forms, etc) and need to be cleaned-up:
+```{r cleanup1}
+cleanEvents = toupper(str_trim(cleanData$EVTYPE))
+cleanEvents = gsub(" AND ", " ", cleanEvents)
+cleanEvents = gsub("S$", "", cleanEvents)
+cleanEvents = gsub("[.\\/&;()-]", " ", cleanEvents)
+cleanEvents = gsub("\\s+", " ", cleanEvents)
+cleanData$EVENT_TYPE = str_trim(cleanEvents)
+```
+
+In order to estimate economic damage numbers in PROPDMG (Property Damage) and CROPDMG (Crop Damage) columns, multipliers must also be considered:
+```{r cleanup2}
+# Fix multipliers
+cleanData$PROP_DAMAGE_MULTI[cleanData$PROPDMGEXP == ""] = 1
+cleanData$PROP_DAMAGE_MULTI[cleanData$PROPDMGEXP == "K"] = 1e3
+cleanData$PROP_DAMAGE_MULTI[cleanData$PROPDMGEXP == "M"] = 1e6
+cleanData$PROP_DAMAGE_MULTI[cleanData$PROPDMGEXP == "B"] = 1e9
+
+cleanData$CROP_DAMAGE_MULTI[cleanData$CROPDMGEXP == ""] = 1
+cleanData$CROP_DAMAGE_MULTI[cleanData$CROPDMGEXP == "K"] = 1e3
+cleanData$CROP_DAMAGE_MULTI[cleanData$CROPDMGEXP == "M"] = 1e6
+cleanData$CROP_DAMAGE_MULTI[cleanData$CROPDMGEXP == "B"] = 1e9
+
+# Calculate total property and crop damage (in billions of dollars)
+cleanData$PROP_DAMAGE = cleanData$PROPDMG * cleanData$PROP_DAMAGE_MULTI / 1e9  
+cleanData$CROP_DAMAGE = cleanData$CROPDMG * cleanData$CROP_DAMAGE_MULTI / 1e9
+```
+
+## Results
+
+### Population Health
+
+**Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?**
+
+In order to answer the question we will find top 5 events with respect to number of fatalities and injuries:
+```{r result1}
+health = aggregate(cbind(FATALITIES, INJURIES) ~ EVENT_TYPE, data = cleanData, FUN = sum)
+
+plot1 = health[order(health$FATALITIES, decreasing = TRUE)[1:5], ]
+plot1$EVENT_TYPE = factor(plot1$EVENT_TYPE, levels=unique(plot1$EVENT_TYPE))
+plot2 = health[order(health$INJURIES, decreasing = TRUE)[1:5], ]
+plot2$EVENT_TYPE = factor(plot2$EVENT_TYPE, levels=unique(plot2$EVENT_TYPE))
+
+g1 = ggplot(data=plot1, aes(x=EVENT_TYPE, y=FATALITIES)) + 
+    geom_bar(stat="identity") + 
+    xlab("") +
+    ylab("Fatalities") 
+g2 = ggplot(data=plot2, aes(x=EVENT_TYPE, y=INJURIES)) + 
+    geom_bar(stat="identity") +
+    xlab("") +
+    ylab("Injuries") 
+    
+grid.arrange(g1, g2, nrow=2)
+```
+
+The most harmful weather event measured by fatality count is `r plot1[1, 1]`, and by injury count is `r plot2[1, 1]`.
+
+### Economy Damage
+
+**Across the United States, which types of events have the greatest economic consequences?**
+
+In order to answer the question we will find top 5 events with respect to their property and crop damage:
+```{r result2}
+economy = aggregate(cbind(PROP_DAMAGE, CROP_DAMAGE) ~ EVENT_TYPE, data = cleanData, FUN = sum)
+
+plot3 = economy[order(economy$PROP_DAMAGE, decreasing = TRUE)[1:5], ]
+plot3$EVENT_TYPE = factor(plot3$EVENT_TYPE, levels=unique(plot3$EVENT_TYPE))
+plot4 = economy[order(economy$CROP_DAMAGE, decreasing = TRUE)[1:5], ]
+plot4$EVENT_TYPE = factor(plot4$EVENT_TYPE, levels=unique(plot4$EVENT_TYPE))
+
+g3 = ggplot(data=plot3, aes(x=EVENT_TYPE, y=PROP_DAMAGE)) + 
+    geom_bar(stat="identity") + 
+    xlab("") +
+    ylab("Property Damage (Billions $)") 
+g4 = ggplot(data=plot4, aes(x=EVENT_TYPE, y=CROP_DAMAGE)) + 
+    geom_bar(stat="identity") +
+    xlab("") +
+    ylab("Crop Damage (Billions $)") 
+    
+grid.arrange(g3, g4, nrow=2)
+```
+
+Weather event that affects economy with respect to property damage: `r plot3[1, 1]`,
+with respect to crop damage: `r plot4[1, 1]`.
